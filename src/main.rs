@@ -1,7 +1,6 @@
 use russh::keys::Algorithm;
 use std::time::{Duration, Instant};
 use std::{path::PathBuf, sync::Arc};
-use tokio::sync::Mutex;
 mod backend;
 use anyhow::Result;
 use ratatui::{
@@ -17,11 +16,13 @@ use russh::{
     server::{Handler, Server, Session},
 };
 
-const FRAME_TIME: Duration = Duration::from_millis(16);
-struct SshServer;
-type TerminalHandle = Terminal<backend::SshRatatui>;
+use tokio::sync::Mutex;
 
-type Render = Box<dyn FnMut(&mut Terminal<backend::SshRatatui>) + Send>;
+pub const FRAME_TIME: Duration = Duration::from_millis(16);
+struct SshServer;
+type TerminalHandle = Arc<Mutex<Terminal<backend::SshRatatui>>>;
+
+type Render = Arc<Mutex<Box<dyn FnMut(&mut Terminal<backend::SshRatatui>) + Send>>>;
 
 struct Client {
     terminal: Option<TerminalHandle>,
@@ -31,26 +32,68 @@ struct Client {
 }
 
 impl Client {
-    fn render(&mut self) {
-        let Some(terminal) = &mut self.terminal else {
+    pub fn render(&mut self) {
+        let Some(terminal) = &self.terminal else {
             return;
         };
 
-        let Some(render) = &mut self.render else {
+        let Some(render) = &self.render else {
             return;
         };
 
-        render(terminal);
-
-        self.last_render = Instant::now();
+        if let (Ok(mut term), Ok(mut ren)) = (terminal.try_lock(), render.try_lock()) {
+            ren(&mut term);
+            self.last_render = Instant::now();
+        }
     }
 
-    fn tick(&mut self) {
+    pub fn tick(&mut self) {
         self.render();
     }
 
-    fn time_until_next_tick(&self) -> Duration {
+    #[allow(dead_code)]
+    pub fn time_until_next_tick(&self) -> Duration {
         FRAME_TIME.saturating_sub(self.last_render.elapsed())
+    }
+
+    pub async fn window_resize_request(
+        &mut self,
+        _channel: ChannelId,
+        col_width: u32,
+        row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _session: &mut Session,
+    ) -> std::prelude::v1::Result<(), anyhow::Error> {
+        let width = col_width as u16;
+        let height = row_height as u16;
+
+        println!("window change: height: {height}, width: {width}");
+
+        if let Some(terminal) = &self.terminal {
+            let mut term = terminal.lock().await;
+            term.backend_mut().resize(width, height);
+            drop(term);
+
+            self.render();
+        }
+
+        Ok(())
+    }
+
+    pub async fn tick_event(
+        &mut self,
+        _channel: ChannelId,
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(Pty, u32)],
+        _session: &mut Session,
+    ) -> std::prelude::v1::Result<(), anyhow::Error> {
+        self.tick();
+        Ok(())
     }
 }
 
@@ -76,7 +119,7 @@ impl Handler for Client {
 
     async fn channel_open_session(
         &mut self,
-        channel: Channel<server::Msg>,
+        _channel: Channel<server::Msg>,
         reply: server::ChannelOpenHandle,
         _session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
@@ -101,36 +144,28 @@ impl Handler for Client {
 
     async fn window_change_request(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         col_width: u32,
         row_height: u32,
-        _pix_width: u32,
-        _pix_height: u32,
-        _session: &mut Session,
+        pix_width: u32,
+        pix_height: u32,
+        session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
-        let width = col_width as u16;
-        let height = row_height as u16;
-
-        println!("window change: height: {height}, width: {width}");
-
-        if let Some(terminal) = &mut self.terminal {
-            terminal.backend_mut().resize(width, height);
-
-            self.render();
-        }
-
-        Ok(())
+        self.window_resize_request(
+            channel, col_width, row_height, pix_width, pix_height, session,
+        )
+        .await
     }
 
     async fn pty_request(
         &mut self,
         channel: ChannelId,
-        _term: &str,
+        term: &str,
         col_width: u32,
         row_height: u32,
-        _pix_width: u32,
-        _pix_height: u32,
-        _modes: &[(Pty, u32)],
+        pix_width: u32,
+        pix_height: u32,
+        modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
@@ -149,16 +184,18 @@ impl Handler for Client {
 
         terminal.clear().unwrap();
 
-        self.terminal = Some(terminal);
+        let terminal = Arc::new(Mutex::new(terminal));
+        self.terminal = Some(terminal.clone());
 
-        self.render = Some(Box::new(move |terminal| {
+        let mut x = 0u16;
+        let render: Render = Arc::new(Mutex::new(Box::new(move |terminal| {
             let art = [
                 r"  ██████╗ ███████╗ █████╗ ███╗   ██╗██╗███████╗",
                 r"  ██╔══██╗██╔════╝██╔══██╗████╗  ██║██║██╔════╝",
                 r"  ██████╔╝█████╗  ███████║██╔██╗ ██║██║█████╗  ",
-                r"  ██╔══██╗██╔══╝  ██╔══██║██║╚██╗██║██╔══╝  ",
+                r"  ██╔══██╗██╔══╝  ██╔══██║██║╚██╗██║██╔██╔══╝  ",
                 r"  ██████╔╝███████╗██║  ██║██║ ╚████║██║███████╗",
-                r"  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝███████╗",
+                r"  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚══════╝",
             ];
 
             let colors = [
@@ -171,8 +208,6 @@ impl Handler for Client {
             ];
 
             let art_width = art.iter().map(|line| line.chars().count()).max().unwrap() as u16;
-
-            let mut x = 0u16;
 
             terminal
                 .draw(|frame| {
@@ -208,19 +243,32 @@ impl Handler for Client {
                 .unwrap();
 
             let width = terminal.size().unwrap().width;
-
-            if width <= art_width {
-                x = 0;
+            let max_x = width.saturating_sub(art_width);
+            if max_x > 0 {
+                x = (x + 1) % max_x;
             } else {
-                x += 1;
-
-                if x + art_width >= width {
-                    x = 0;
-                }
+                x = 0;
             }
-        }));
+        })));
 
-        self.render();
+        self.render = Some(render.clone());
+
+        let term_clone = terminal.clone();
+        let render_clone = render.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(FRAME_TIME);
+            loop {
+                interval.tick().await;
+                let mut term = term_clone.lock().await;
+                let mut ren = render_clone.lock().await;
+                ren(&mut term);
+            }
+        });
+
+        self.tick_event(
+            channel, term, col_width, row_height, pix_width, pix_height, modes, session,
+        )
+        .await?;
 
         session.channel_success(channel).unwrap();
 
@@ -257,3 +305,6 @@ async fn main() {
         .await
         .unwrap();
 }
+
+
+
