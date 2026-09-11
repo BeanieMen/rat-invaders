@@ -49,6 +49,8 @@ where
 {
     type Error = anyhow::Error;
 
+    // clippy is crying but cant do anything bout it
+    #[allow(clippy::unused_async_trait_impl)]
     async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
         Ok(Auth::Accept)
     }
@@ -62,7 +64,9 @@ where
         reply.accept().await;
         Ok(())
     }
-
+    
+    // clippy is crying but cant do anything bout it
+    #[allow(clippy::unused_async_trait_impl)]
     async fn data(
         &mut self,
         _channel: ChannelId,
@@ -70,11 +74,13 @@ where
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if matches!(data, b"q" | b"\x03" | b"\x04") {
-            if let Some(terminal) = &self.terminal {
-                if let Ok(mut terminal) = terminal.try_lock() {
-                    terminal.show_cursor().ok();
-                }
-            }
+            let Some(terminal) = &self.terminal else {
+                return Ok(());
+            };
+            let Ok(mut terminal) = terminal.try_lock() else {
+                return Ok(());
+            };
+            terminal.show_cursor().ok();
         }
 
         Ok(())
@@ -90,11 +96,10 @@ where
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(terminal) = &self.terminal {
-            terminal
-                .lock()
-                .await
-                .backend_mut()
-                .resize(cols as u16, rows as u16);
+            terminal.lock().await.backend_mut().resize(
+                u16::try_from(cols).unwrap_or(0),
+                u16::try_from(rows).unwrap_or(0),
+            );
         }
 
         Ok(())
@@ -122,11 +127,11 @@ where
             }
         });
 
-        let terminal = Arc::new(Mutex::new(
-            ratatui::Terminal::new(
-                SshBackend::new(tx, cols as u16, rows as u16)
-            )?,
-        ));
+        let terminal = Arc::new(Mutex::new(ratatui::Terminal::new(SshBackend::new(
+            tx,
+            u16::try_from(cols).unwrap_or(0),
+            u16::try_from(rows).unwrap_or(0),
+        ))?));
 
         terminal.lock().await.clear()?;
 

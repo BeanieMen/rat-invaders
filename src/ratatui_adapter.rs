@@ -13,7 +13,7 @@ pub struct SshBackend {
 }
 
 impl SshBackend {
-    pub fn new(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, width: u16, height: u16) -> Self {
+    pub const fn new(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, width: u16, height: u16) -> Self {
         Self { tx, width, height }
     }
 
@@ -23,7 +23,7 @@ impl SshBackend {
             .map_err(|_| Error::new(BrokenPipe, "SSH writer closed"))
     }
 
-    pub fn resize(&mut self, width: u16, height: u16) {
+    pub const fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
     }
@@ -34,7 +34,7 @@ fn color(color: Color, output: &mut Vec<u8>, foreground: bool) {
 
     match color {
         Color::Reset => {
-            output.extend_from_slice(if foreground { b"\x1b[39m" } else { b"\x1b[49m" })
+            output.extend_from_slice(if foreground { b"\x1b[39m" } else { b"\x1b[49m" });
         }
 
         Color::Black => output.extend_from_slice(format!("\x1b[{base}m").as_bytes()),

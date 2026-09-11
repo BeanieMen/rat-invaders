@@ -41,8 +41,14 @@ impl Renderer<ClientDataState> for MyRenderer {
             "  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚══════╝",
         ];
 
-        let art_width = ART.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u16;
-
+        let art_width = u16::try_from(
+            ART.iter()
+                .map(|r| r.chars().count())
+                .max()
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default();
+      
         let art: Vec<Line> = ART
             .iter()
             .map(|row| {
@@ -52,7 +58,7 @@ impl Renderer<ClientDataState> for MyRenderer {
                         .map(|(i, c)| {
                             Span::styled(
                                 c.to_string(),
-                                Style::default().fg(COLORS[(i + state.x as usize) % COLORS.len()]),
+                                Style::default().fg(COLORS.get((i + usize::from(state.x)) % COLORS.len()).copied().unwrap_or(Color::Reset)),
                             )
                         })
                         .collect::<Vec<_>>(),
@@ -62,7 +68,7 @@ impl Renderer<ClientDataState> for MyRenderer {
 
         let [_, center, _] = Layout::vertical([
             Constraint::Fill(1),
-            Constraint::Length(ART.len() as u16),
+            Constraint::Length(u16::try_from(ART.len()).unwrap_or(0)),
             Constraint::Fill(1),
         ])
         .areas(frame.area());
