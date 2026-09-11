@@ -87,7 +87,7 @@ impl Server for RatatuiSshServer {
     type Handler = Client<ClientDataState, MyRenderer>;
 
     fn new_client(&mut self, _addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        Client::new()
+        <Self as SshRatatui>::new_client()
     }
 }
 

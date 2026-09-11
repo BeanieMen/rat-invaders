@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use russh::{
-    server::{Auth, ChannelOpenHandle, Handler, Msg, Session},
     Channel, ChannelId,
+    server::{Auth, ChannelOpenHandle, Handler, Msg, Session},
 };
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -23,6 +23,10 @@ pub trait Renderer<S>: Default + Send + Sync + 'static {
 pub trait SshRatatui: Server {
     type State: Default + Send + 'static;
     type Renderer: Renderer<Self::State>;
+
+    fn new_client() -> Client<Self::State, Self::Renderer> {
+        Client::new()
+    }
 }
 
 pub struct Client<S, R> {
@@ -94,7 +98,10 @@ where
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(t) = &self.terminal {
-            t.lock().await.backend_mut().resize(col_width as u16, row_height as u16);
+            t.lock()
+                .await
+                .backend_mut()
+                .resize(col_width as u16, row_height as u16);
         }
         Ok(())
     }
@@ -121,9 +128,8 @@ where
             }
         });
 
-        let mut terminal = ratatui::Terminal::new(
-            SshBackend::new(tx, col_width as u16, row_height as u16)
-        )?;
+        let mut terminal =
+            ratatui::Terminal::new(SshBackend::new(tx, col_width as u16, row_height as u16))?;
         terminal.clear()?;
 
         let terminal_arc: TerminalHandle = Arc::new(AsyncMutex::new(terminal));
