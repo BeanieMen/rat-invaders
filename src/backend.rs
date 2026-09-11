@@ -4,10 +4,9 @@ use ratatui::{
     layout::{Position, Size},
     style::Color,
 };
-use std::io;
-
+use std::io::{Error, ErrorKind::BrokenPipe};
 pub struct SshRatatui {
-    handle: russh::server::Handle,
+    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     channel: russh::ChannelId,
 
     width: u16,
@@ -16,31 +15,26 @@ pub struct SshRatatui {
 
 impl SshRatatui {
     pub fn new(
-        handle: russh::server::Handle,
+        tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
         channel: russh::ChannelId,
+
         width: u16,
         height: u16,
     ) -> Self {
         Self {
-            handle,
+            tx,
             channel,
             width,
             height,
         }
     }
-    pub fn write(&self, data: &[u8]) -> io::Result<()> {
-        let handle = self.handle.clone();
-        let channel = self.channel;
-        let data = data.to_vec();
 
-        tokio::spawn(async move {
-            if let Err(e) = handle.data(channel, data).await {
-                eprintln!("SSH write failed: {e:?}");
-            }
-        });
-
-        Ok(())
+    pub fn write(&self, data: &[u8]) -> std::io::Result<()> {
+        self.tx
+            .send(data.to_vec())
+            .map_err(|_| Error::new(BrokenPipe, "SSH writer closed"))
     }
+
     pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
@@ -112,7 +106,7 @@ fn bg(color: Color, output: &mut Vec<u8>) {
 }
 
 impl Backend for SshRatatui {
-    type Error = io::Error;
+    type Error = std::io::Error;
 
     fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
     where

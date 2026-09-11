@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use std::time::Duration;
+use russh::keys::Algorithm;
 use tokio::sync::Mutex;
 mod backend;
-mod backend_new;
 use anyhow::Result;
 use ratatui::{
     Terminal,
@@ -11,8 +11,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use russh::server::{Handler, Server, Session};
 use russh::*;
+use russh::{
+    keys::PrivateKey,
+    server::{Handler, Server, Session},
+};
 
 struct SshServer;
 struct Client {
@@ -95,10 +98,18 @@ impl Handler for Client {
         _modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
-        let width = col_width as u16;
-        let height = row_height as u16;
-        println!("height: {height}, width: {width}");
-        let backend = backend::SshRatatui::new(session.handle(), channel, width, height);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+        let backend = backend::SshRatatui::new(tx, channel, col_width as u16, row_height as u16);
+        let handle = session.handle();
+        tokio::spawn(async move {
+            while let Some(data) = rx.recv().await {
+                if let Err(e) = handle.data(channel, data).await {
+                    eprintln!("SSH write failed: {e:?}");
+                    break;
+                }
+            }
+        });
 
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.clear().unwrap();
@@ -159,7 +170,7 @@ impl Handler for Client {
                             Paragraph::new(lines),
                             Rect {
                                 x,
-                                y: (frame.area().height - art.len() as u16) / 2   as u16,
+                                y: (frame.area().height - art.len() as u16) / 2 as u16,
                                 width: art_width,
                                 height: art.len() as u16,
                             },
@@ -183,11 +194,19 @@ impl Handler for Client {
 
 #[tokio::main]
 async fn main() {
-    let algorithm = russh::keys::Algorithm::Ed25519;
+    let path = PathBuf::from("ed25519_key");
+    let key = if path.exists() {
+        PrivateKey::read_openssh_file(&path).unwrap()
+    } else {
+        let algorithm = Algorithm::Ed25519;
+        let mut rng = russh::keys::key::safe_rng();
 
-    let mut rng = russh::keys::key::safe_rng();
+        let key = PrivateKey::random(&mut rng, algorithm).unwrap();
 
-    let key = russh::keys::PrivateKey::random(&mut rng, algorithm).unwrap();
+        key.write_openssh_file(&path, keys::ssh_key::LineEnding::CR).unwrap();
+
+        key
+    };
 
     let config = russh::server::Config {
         keys: vec![key],

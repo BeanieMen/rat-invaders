@@ -1,1 +1,4 @@
 /target
+.gitignore 
+.vscode
+ed25519_key
