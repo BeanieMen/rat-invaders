@@ -1,5 +1,5 @@
 use russh::keys::Algorithm;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 mod backend;
@@ -17,18 +17,51 @@ use russh::{
     server::{Handler, Server, Session},
 };
 
+const FRAME_TIME: Duration = Duration::from_millis(16);
 struct SshServer;
+type TerminalHandle = Terminal<backend::SshRatatui>;
+
+type Render = Box<dyn FnMut(&mut Terminal<backend::SshRatatui>) + Send>;
+
 struct Client {
-    terminal: Option<Arc<Mutex<Terminal<backend::SshRatatui>>>>,
-    render: Option<Arc<dyn Fn(&mut Terminal<backend::SshRatatui>) + Send + Sync>>,
+    terminal: Option<TerminalHandle>,
+    render: Option<Render>,
+
+    last_render: Instant,
 }
-impl russh::server::Server for SshServer {
+
+impl Client {
+    fn render(&mut self) {
+        let Some(terminal) = &mut self.terminal else {
+            return;
+        };
+
+        let Some(render) = &mut self.render else {
+            return;
+        };
+
+        render(terminal);
+
+        self.last_render = Instant::now();
+    }
+
+    fn tick(&mut self) {
+        self.render();
+    }
+
+    fn time_until_next_tick(&self) -> Duration {
+        FRAME_TIME.saturating_sub(self.last_render.elapsed())
+    }
+}
+
+impl Server for SshServer {
     type Handler = Client;
 
     fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Client {
         Client {
             terminal: None,
             render: None,
+            last_render: Instant::now(),
         }
     }
 }
@@ -80,9 +113,10 @@ impl Handler for Client {
 
         println!("window change: height: {height}, width: {width}");
 
-        if let Some(terminal) = &self.terminal {
-            let mut terminal = terminal.lock().await;
+        if let Some(terminal) = &mut self.terminal {
             terminal.backend_mut().resize(width, height);
+
+            self.render();
         }
 
         Ok(())
@@ -112,18 +146,19 @@ impl Handler for Client {
             }
         });
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.clear().unwrap();
-        let terminal = Arc::new(Mutex::new(terminal));
-        self.terminal = Some(terminal.clone());
 
-        let render = Arc::new(|terminal: &mut Terminal<backend::SshRatatui>| {
+        terminal.clear().unwrap();
+
+        self.terminal = Some(terminal);
+
+        self.render = Some(Box::new(move |terminal| {
             let art = [
                 r"  ██████╗ ███████╗ █████╗ ███╗   ██╗██╗███████╗",
                 r"  ██╔══██╗██╔════╝██╔══██╗████╗  ██║██║██╔════╝",
                 r"  ██████╔╝█████╗  ███████║██╔██╗ ██║██║█████╗  ",
-                r"  ██╔══██╗██╔══╝  ██╔══██║██║╚██╗██║██║██╔══╝  ",
+                r"  ██╔══██╗██╔══╝  ██╔══██║██║╚██╗██║██╔══╝  ",
                 r"  ██████╔╝███████╗██║  ██║██║ ╚████║██║███████╗",
-                r"  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚══════╝",
+                r"  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝███████╗",
             ];
 
             let colors = [
@@ -137,15 +172,13 @@ impl Handler for Client {
 
             let art_width = art.iter().map(|line| line.chars().count()).max().unwrap() as u16;
 
-            let mut x: u16 = 0;
+            let mut x = 0u16;
 
-            loop {
-                println!("frame");
-                terminal
-                    .draw(|frame| {
-                        let mut lines = Vec::new();
-
-                        for (row, text) in art.iter().enumerate() {
+            terminal
+                .draw(|frame| {
+                    let lines = art
+                        .iter()
+                        .map(|text| {
                             let spans = text
                                 .chars()
                                 .enumerate()
@@ -158,31 +191,37 @@ impl Handler for Client {
                                 })
                                 .collect::<Vec<_>>();
 
-                            lines.push(Line::from(spans));
+                            Line::from(spans)
+                        })
+                        .collect::<Vec<_>>();
 
-                            let _ = row;
-                        }
+                    frame.render_widget(
+                        Paragraph::new(lines),
+                        Rect {
+                            x,
+                            y: frame.area().height.saturating_sub(art.len() as u16) / 2,
+                            width: art_width,
+                            height: art.len() as u16,
+                        },
+                    );
+                })
+                .unwrap();
 
-                        frame.render_widget(
-                            Paragraph::new(lines),
-                            Rect {
-                                x,
-                                y: (frame.area().height - art.len() as u16) / 2 as u16,
-                                width: art_width,
-                                height: art.len() as u16,
-                            },
-                        );
-                    })
-                    .unwrap();
+            let width = terminal.size().unwrap().width;
 
+            if width <= art_width {
+                x = 0;
+            } else {
                 x += 1;
 
-                if x + art_width >= terminal.size().unwrap().width {
+                if x + art_width >= width {
                     x = 0;
                 }
             }
-        });
-        self.render = Some(render.clone());
+        }));
+
+        self.render();
+
         session.channel_success(channel).unwrap();
 
         Ok(())

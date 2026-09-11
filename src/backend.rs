@@ -4,7 +4,9 @@ use ratatui::{
     layout::{Position, Size},
     style::Color,
 };
+
 use std::io::{Error, ErrorKind::BrokenPipe};
+
 pub struct SshRatatui {
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     width: u16,
@@ -39,7 +41,6 @@ impl SshRatatui {
 fn fg(color: Color, output: &mut Vec<u8>) {
     match color {
         Color::Reset => output.extend_from_slice(b"\x1b[39m"),
-
         Color::Black => output.extend_from_slice(b"\x1b[30m"),
         Color::Red => output.extend_from_slice(b"\x1b[31m"),
         Color::Green => output.extend_from_slice(b"\x1b[32m"),
@@ -48,7 +49,6 @@ fn fg(color: Color, output: &mut Vec<u8>) {
         Color::Magenta => output.extend_from_slice(b"\x1b[35m"),
         Color::Cyan => output.extend_from_slice(b"\x1b[36m"),
         Color::Gray => output.extend_from_slice(b"\x1b[37m"),
-
         Color::DarkGray => output.extend_from_slice(b"\x1b[90m"),
         Color::LightRed => output.extend_from_slice(b"\x1b[91m"),
         Color::LightGreen => output.extend_from_slice(b"\x1b[92m"),
@@ -57,11 +57,9 @@ fn fg(color: Color, output: &mut Vec<u8>) {
         Color::LightMagenta => output.extend_from_slice(b"\x1b[95m"),
         Color::LightCyan => output.extend_from_slice(b"\x1b[96m"),
         Color::White => output.extend_from_slice(b"\x1b[97m"),
-
         Color::Indexed(i) => {
             output.extend_from_slice(format!("\x1b[38;5;{i}m").as_bytes());
         }
-
         Color::Rgb(r, g, b) => {
             output.extend_from_slice(format!("\x1b[38;2;{r};{g};{b}m").as_bytes());
         }
@@ -71,7 +69,6 @@ fn fg(color: Color, output: &mut Vec<u8>) {
 fn bg(color: Color, output: &mut Vec<u8>) {
     match color {
         Color::Reset => output.extend_from_slice(b"\x1b[49m"),
-
         Color::Black => output.extend_from_slice(b"\x1b[40m"),
         Color::Red => output.extend_from_slice(b"\x1b[41m"),
         Color::Green => output.extend_from_slice(b"\x1b[42m"),
@@ -80,7 +77,6 @@ fn bg(color: Color, output: &mut Vec<u8>) {
         Color::Magenta => output.extend_from_slice(b"\x1b[45m"),
         Color::Cyan => output.extend_from_slice(b"\x1b[46m"),
         Color::Gray => output.extend_from_slice(b"\x1b[47m"),
-
         Color::DarkGray => output.extend_from_slice(b"\x1b[100m"),
         Color::LightRed => output.extend_from_slice(b"\x1b[101m"),
         Color::LightGreen => output.extend_from_slice(b"\x1b[102m"),
@@ -89,11 +85,9 @@ fn bg(color: Color, output: &mut Vec<u8>) {
         Color::LightMagenta => output.extend_from_slice(b"\x1b[105m"),
         Color::LightCyan => output.extend_from_slice(b"\x1b[106m"),
         Color::White => output.extend_from_slice(b"\x1b[107m"),
-
         Color::Indexed(i) => {
             output.extend_from_slice(format!("\x1b[48;5;{i}m").as_bytes());
         }
-
         Color::Rgb(r, g, b) => {
             output.extend_from_slice(format!("\x1b[48;2;{r};{g};{b}m").as_bytes());
         }
@@ -110,7 +104,9 @@ impl Backend for SshRatatui {
         let mut output = Vec::new();
 
         for (x, y, cell) in content {
-            output.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
+            output.extend_from_slice(
+                format!("\x1b[{};{}H", y + 1, x + 1).as_bytes(),
+            );
 
             fg(cell.fg, &mut output);
             bg(cell.bg, &mut output);
@@ -159,10 +155,16 @@ impl Backend for SshRatatui {
     {
         let position = position.into();
 
-        self.write(format!("\x1b[{};{}H", position.y + 1, position.x + 1).as_bytes())
+        self.write(
+            format!("\x1b[{};{}H", position.y + 1, position.x + 1)
+                .as_bytes(),
+        )
     }
 
-    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
+    fn clear_region(
+        &mut self,
+        clear_type: ClearType,
+    ) -> Result<(), Self::Error> {
         match clear_type {
             ClearType::All => self.write(b"\x1b[2J\x1b[H"),
             ClearType::AfterCursor => self.write(b"\x1b[0J"),
