@@ -18,7 +18,7 @@ use russh::{
 
 use tokio::sync::Mutex;
 
-pub const FRAME_TIME: Duration = Duration::from_millis(16);
+pub const FRAME_TIME: Duration = Duration::from_millis(32);
 struct SshServer;
 type TerminalHandle = Arc<Mutex<Terminal<backend::SshRatatui>>>;
 
@@ -47,15 +47,6 @@ impl Client {
         }
     }
 
-    pub fn tick(&mut self) {
-        self.render();
-    }
-
-    #[allow(dead_code)]
-    pub fn time_until_next_tick(&self) -> Duration {
-        FRAME_TIME.saturating_sub(self.last_render.elapsed())
-    }
-
     pub async fn window_resize_request(
         &mut self,
         _channel: ChannelId,
@@ -67,9 +58,6 @@ impl Client {
     ) -> std::prelude::v1::Result<(), anyhow::Error> {
         let width = col_width as u16;
         let height = row_height as u16;
-
-        println!("window change: height: {height}, width: {width}");
-
         if let Some(terminal) = &self.terminal {
             let mut term = terminal.lock().await;
             term.backend_mut().resize(width, height);
@@ -78,21 +66,6 @@ impl Client {
             self.render();
         }
 
-        Ok(())
-    }
-
-    pub async fn tick_event(
-        &mut self,
-        _channel: ChannelId,
-        _term: &str,
-        _col_width: u32,
-        _row_height: u32,
-        _pix_width: u32,
-        _pix_height: u32,
-        _modes: &[(Pty, u32)],
-        _session: &mut Session,
-    ) -> std::prelude::v1::Result<(), anyhow::Error> {
-        self.tick();
         Ok(())
     }
 }
@@ -160,12 +133,12 @@ impl Handler for Client {
     async fn pty_request(
         &mut self,
         channel: ChannelId,
-        term: &str,
+        _term: &str,
         col_width: u32,
         row_height: u32,
-        pix_width: u32,
-        pix_height: u32,
-        modes: &[(Pty, u32)],
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
@@ -264,12 +237,6 @@ impl Handler for Client {
                 ren(&mut term);
             }
         });
-
-        self.tick_event(
-            channel, term, col_width, row_height, pix_width, pix_height, modes, session,
-        )
-        .await?;
-
         session.channel_success(channel).unwrap();
 
         Ok(())
