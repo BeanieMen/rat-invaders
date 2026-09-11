@@ -13,11 +13,7 @@ pub struct SshBackend {
 }
 
 impl SshBackend {
-    pub fn new(
-        tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-        width: u16,
-        height: u16,
-    ) -> Self {
+    pub fn new(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, width: u16, height: u16) -> Self {
         Self { tx, width, height }
     }
 
@@ -33,54 +29,76 @@ impl SshBackend {
     }
 }
 
-fn fg(color: Color, output: &mut Vec<u8>) {
+fn color(color: Color, output: &mut Vec<u8>, foreground: bool) {
+    let base = if foreground { 30 } else { 40 };
+
     match color {
-        Color::Reset => output.extend_from_slice(b"\x1b[39m"),
-        Color::Black => output.extend_from_slice(b"\x1b[30m"),
-        Color::Red => output.extend_from_slice(b"\x1b[31m"),
-        Color::Green => output.extend_from_slice(b"\x1b[32m"),
-        Color::Yellow => output.extend_from_slice(b"\x1b[33m"),
-        Color::Blue => output.extend_from_slice(b"\x1b[34m"),
-        Color::Magenta => output.extend_from_slice(b"\x1b[35m"),
-        Color::Cyan => output.extend_from_slice(b"\x1b[36m"),
-        Color::Gray => output.extend_from_slice(b"\x1b[37m"),
-        Color::DarkGray => output.extend_from_slice(b"\x1b[90m"),
-        Color::LightRed => output.extend_from_slice(b"\x1b[91m"),
-        Color::LightGreen => output.extend_from_slice(b"\x1b[92m"),
-        Color::LightYellow => output.extend_from_slice(b"\x1b[93m"),
-        Color::LightBlue => output.extend_from_slice(b"\x1b[94m"),
-        Color::LightMagenta => output.extend_from_slice(b"\x1b[95m"),
-        Color::LightCyan => output.extend_from_slice(b"\x1b[96m"),
-        Color::White => output.extend_from_slice(b"\x1b[97m"),
-        Color::Indexed(i) => output.extend_from_slice(format!("\x1b[38;5;{i}m").as_bytes()),
-        Color::Rgb(r, g, b) => output.extend_from_slice(format!("\x1b[38;2;{r};{g};{b}m").as_bytes()),
+        Color::Reset => {
+            output.extend_from_slice(if foreground { b"\x1b[39m" } else { b"\x1b[49m" })
+        }
+
+        Color::Black => output.extend_from_slice(format!("\x1b[{base}m").as_bytes()),
+        Color::Red => output.extend_from_slice(format!("\x1b[{}m", base + 1).as_bytes()),
+        Color::Green => output.extend_from_slice(format!("\x1b[{}m", base + 2).as_bytes()),
+        Color::Yellow => output.extend_from_slice(format!("\x1b[{}m", base + 3).as_bytes()),
+        Color::Blue => output.extend_from_slice(format!("\x1b[{}m", base + 4).as_bytes()),
+        Color::Magenta => output.extend_from_slice(format!("\x1b[{}m", base + 5).as_bytes()),
+        Color::Cyan => output.extend_from_slice(format!("\x1b[{}m", base + 6).as_bytes()),
+        Color::Gray => output.extend_from_slice(format!("\x1b[{}m", base + 7).as_bytes()),
+
+        Color::DarkGray => output.extend_from_slice(if foreground {
+            b"\x1b[90m"
+        } else {
+            b"\x1b[100m"
+        }),
+
+        Color::LightRed => output.extend_from_slice(if foreground {
+            b"\x1b[91m"
+        } else {
+            b"\x1b[101m"
+        }),
+        Color::LightGreen => output.extend_from_slice(if foreground {
+            b"\x1b[92m"
+        } else {
+            b"\x1b[102m"
+        }),
+        Color::LightYellow => output.extend_from_slice(if foreground {
+            b"\x1b[93m"
+        } else {
+            b"\x1b[103m"
+        }),
+        Color::LightBlue => output.extend_from_slice(if foreground {
+            b"\x1b[94m"
+        } else {
+            b"\x1b[104m"
+        }),
+        Color::LightMagenta => output.extend_from_slice(if foreground {
+            b"\x1b[95m"
+        } else {
+            b"\x1b[105m"
+        }),
+        Color::LightCyan => output.extend_from_slice(if foreground {
+            b"\x1b[96m"
+        } else {
+            b"\x1b[106m"
+        }),
+        Color::White => output.extend_from_slice(if foreground {
+            b"\x1b[97m"
+        } else {
+            b"\x1b[107m"
+        }),
+
+        Color::Indexed(i) => {
+            let mode = if foreground { 38 } else { 48 };
+            output.extend_from_slice(format!("\x1b[{mode};5;{i}m").as_bytes());
+        }
+
+        Color::Rgb(r, g, b) => {
+            let mode = if foreground { 38 } else { 48 };
+            output.extend_from_slice(format!("\x1b[{mode};2;{r};{g};{b}m").as_bytes());
+        }
     }
 }
-
-fn bg(color: Color, output: &mut Vec<u8>) {
-    match color {
-        Color::Reset => output.extend_from_slice(b"\x1b[49m"),
-        Color::Black => output.extend_from_slice(b"\x1b[40m"),
-        Color::Red => output.extend_from_slice(b"\x1b[41m"),
-        Color::Green => output.extend_from_slice(b"\x1b[42m"),
-        Color::Yellow => output.extend_from_slice(b"\x1b[43m"),
-        Color::Blue => output.extend_from_slice(b"\x1b[44m"),
-        Color::Magenta => output.extend_from_slice(b"\x1b[45m"),
-        Color::Cyan => output.extend_from_slice(b"\x1b[46m"),
-        Color::Gray => output.extend_from_slice(b"\x1b[47m"),
-        Color::DarkGray => output.extend_from_slice(b"\x1b[100m"),
-        Color::LightRed => output.extend_from_slice(b"\x1b[101m"),
-        Color::LightGreen => output.extend_from_slice(b"\x1b[102m"),
-        Color::LightYellow => output.extend_from_slice(b"\x1b[103m"),
-        Color::LightBlue => output.extend_from_slice(b"\x1b[104m"),
-        Color::LightMagenta => output.extend_from_slice(b"\x1b[105m"),
-        Color::LightCyan => output.extend_from_slice(b"\x1b[106m"),
-        Color::White => output.extend_from_slice(b"\x1b[107m"),
-        Color::Indexed(i) => output.extend_from_slice(format!("\x1b[48;5;{i}m").as_bytes()),
-        Color::Rgb(r, g, b) => output.extend_from_slice(format!("\x1b[48;2;{r};{g};{b}m").as_bytes()),
-    }
-}
-
 impl Backend for SshBackend {
     type Error = std::io::Error;
 
@@ -91,8 +109,8 @@ impl Backend for SshBackend {
         let mut output = Vec::new();
         for (x, y, cell) in content {
             output.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
-            fg(cell.fg, &mut output);
-            bg(cell.bg, &mut output);
+            color(cell.fg, &mut output, true);
+            color(cell.bg, &mut output, false);
             output.extend_from_slice(cell.symbol().as_bytes());
         }
         self.write(&output)
