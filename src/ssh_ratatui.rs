@@ -3,64 +3,64 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Result;
 use russh::{
     keys::ssh_key::PrivateKey,
-    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
+    server::{Auth, ChannelOpenHandle, Handler, Msg, Session},
     Channel, ChannelId,
 };
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::ratatui_adapter::SshBackend;
 
+// 30 fps
 const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 
 type TerminalHandle = Arc<AsyncMutex<ratatui::Terminal<SshBackend>>>;
+
+pub use russh::server::Server;
 
 pub trait Renderer<S>: Default + Send + Sync + 'static {
     fn render(&mut self, state: &mut S, frame: &mut ratatui::Frame);
 }
 
-pub trait SshRatatui: Send + Sync + 'static {
+pub trait SshRatatui: Server {
     type State: Default + Send + 'static;
     type Renderer: Renderer<Self::State>;
 }
 
-pub async fn run_server<A: SshRatatui>(bind_addr: &str) -> Result<()> {
-    let key = PrivateKey::from(russh::keys::ssh_key::private::Ed25519Keypair::from_seed(
-        &[42; 32],
-    ));
-    let config = russh::server::Config {
-        auth_rejection_time: Duration::from_secs(0),
-        keys: vec![key],
-        ..Default::default()
-    };
-
-    SshServer::<A>(|| Client {
-        renderer: Arc::new(std::sync::Mutex::new(A::Renderer::default())),
-        state: Arc::new(std::sync::Mutex::new(A::State::default())),
-        terminal: None,
-    })
-    .run_on_address(Arc::new(config), bind_addr)
-    .await?;
-
-    Ok(())
-}
-
-struct SshServer<A: SshRatatui>(fn() -> Client<A>);
-
-impl<A: SshRatatui> Server for SshServer<A> {
-    type Handler = Client<A>;
-
-    fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Client<A> {
-        (self.0)()
-    }
-}
-
-struct Client<A: SshRatatui> {
-    renderer: Arc<std::sync::Mutex<A::Renderer>>,
-    state: Arc<std::sync::Mutex<A::State>>,
+pub struct Client<S, R> {
+    pub renderer: Arc<std::sync::Mutex<R>>,
+    pub state: Arc<std::sync::Mutex<S>>,
     terminal: Option<TerminalHandle>,
 }
 
-impl<A: SshRatatui> Handler for Client<A> {
+impl<S: Default, R: Default> Default for Client<S, R> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S: Default, R: Default> Client<S, R> {
+    pub fn new() -> Self {
+        Self {
+            renderer: Arc::new(std::sync::Mutex::new(R::default())),
+            state: Arc::new(std::sync::Mutex::new(S::default())),
+            terminal: None,
+        }
+    }
+
+    pub fn with_state_and_renderer(state: S, renderer: R) -> Self {
+        Self {
+            renderer: Arc::new(std::sync::Mutex::new(renderer)),
+            state: Arc::new(std::sync::Mutex::new(state)),
+            terminal: None,
+        }
+    }
+}
+
+impl<S, R> Handler for Client<S, R>
+where
+    S: Send + 'static,
+    R: Renderer<S>,
+{
     type Error = anyhow::Error;
 
     async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
