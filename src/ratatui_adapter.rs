@@ -4,26 +4,21 @@ use ratatui::{
     layout::{Position, Size},
     style::Color,
 };
-
 use std::io::{Error, ErrorKind::BrokenPipe};
 
-pub struct SshRatatui {
+pub struct SshBackend {
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     width: u16,
     height: u16,
 }
 
-impl SshRatatui {
+impl SshBackend {
     pub fn new(
         tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
         width: u16,
         height: u16,
     ) -> Self {
-        Self {
-            tx,
-            width,
-            height,
-        }
+        Self { tx, width, height }
     }
 
     pub fn write(&self, data: &[u8]) -> std::io::Result<()> {
@@ -57,12 +52,8 @@ fn fg(color: Color, output: &mut Vec<u8>) {
         Color::LightMagenta => output.extend_from_slice(b"\x1b[95m"),
         Color::LightCyan => output.extend_from_slice(b"\x1b[96m"),
         Color::White => output.extend_from_slice(b"\x1b[97m"),
-        Color::Indexed(i) => {
-            output.extend_from_slice(format!("\x1b[38;5;{i}m").as_bytes());
-        }
-        Color::Rgb(r, g, b) => {
-            output.extend_from_slice(format!("\x1b[38;2;{r};{g};{b}m").as_bytes());
-        }
+        Color::Indexed(i) => output.extend_from_slice(format!("\x1b[38;5;{i}m").as_bytes()),
+        Color::Rgb(r, g, b) => output.extend_from_slice(format!("\x1b[38;2;{r};{g};{b}m").as_bytes()),
     }
 }
 
@@ -85,16 +76,12 @@ fn bg(color: Color, output: &mut Vec<u8>) {
         Color::LightMagenta => output.extend_from_slice(b"\x1b[105m"),
         Color::LightCyan => output.extend_from_slice(b"\x1b[106m"),
         Color::White => output.extend_from_slice(b"\x1b[107m"),
-        Color::Indexed(i) => {
-            output.extend_from_slice(format!("\x1b[48;5;{i}m").as_bytes());
-        }
-        Color::Rgb(r, g, b) => {
-            output.extend_from_slice(format!("\x1b[48;2;{r};{g};{b}m").as_bytes());
-        }
+        Color::Indexed(i) => output.extend_from_slice(format!("\x1b[48;5;{i}m").as_bytes()),
+        Color::Rgb(r, g, b) => output.extend_from_slice(format!("\x1b[48;2;{r};{g};{b}m").as_bytes()),
     }
 }
 
-impl Backend for SshRatatui {
+impl Backend for SshBackend {
     type Error = std::io::Error;
 
     fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
@@ -102,18 +89,12 @@ impl Backend for SshRatatui {
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
         let mut output = Vec::new();
-
         for (x, y, cell) in content {
-            output.extend_from_slice(
-                format!("\x1b[{};{}H", y + 1, x + 1).as_bytes(),
-            );
-
+            output.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
             fg(cell.fg, &mut output);
             bg(cell.bg, &mut output);
-
             output.extend_from_slice(cell.symbol().as_bytes());
         }
-
         self.write(&output)
     }
 
@@ -149,22 +130,12 @@ impl Backend for SshRatatui {
         self.write(b"\x1b[?25h")
     }
 
-    fn set_cursor_position<P>(&mut self, position: P) -> Result<(), Self::Error>
-    where
-        P: Into<Position>,
-    {
-        let position = position.into();
-
-        self.write(
-            format!("\x1b[{};{}H", position.y + 1, position.x + 1)
-                .as_bytes(),
-        )
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        let p = position.into();
+        self.write(format!("\x1b[{};{}H", p.y + 1, p.x + 1).as_bytes())
     }
 
-    fn clear_region(
-        &mut self,
-        clear_type: ClearType,
-    ) -> Result<(), Self::Error> {
+    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
         match clear_type {
             ClearType::All => self.write(b"\x1b[2J\x1b[H"),
             ClearType::AfterCursor => self.write(b"\x1b[0J"),
