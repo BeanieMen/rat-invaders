@@ -1,6 +1,6 @@
-use std::{path::PathBuf, sync::Arc};
-use std::time::Duration;
 use russh::keys::Algorithm;
+use std::time::Duration;
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 mod backend;
 use anyhow::Result;
@@ -20,12 +20,16 @@ use russh::{
 struct SshServer;
 struct Client {
     terminal: Option<Arc<Mutex<Terminal<backend::SshRatatui>>>>,
+    render: Option<Arc<dyn Fn(&mut Terminal<backend::SshRatatui>) + Send + Sync>>,
 }
 impl russh::server::Server for SshServer {
     type Handler = Client;
 
     fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Client {
-        Client { terminal: None }
+        Client {
+            terminal: None,
+            render: None,
+        }
     }
 }
 
@@ -64,25 +68,22 @@ impl Handler for Client {
 
     async fn window_change_request(
         &mut self,
-        channel: ChannelId,
+        _channel: ChannelId,
         col_width: u32,
         row_height: u32,
         _pix_width: u32,
         _pix_height: u32,
-        session: &mut Session,
+        _session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
         let width = col_width as u16;
         let height = row_height as u16;
+
         println!("window change: height: {height}, width: {width}");
+
         if let Some(terminal) = &self.terminal {
             let mut terminal = terminal.lock().await;
-
             terminal.backend_mut().resize(width, height);
-
-            terminal.resize(Rect::new(0, 0, width, height)).unwrap();
         }
-
-        session.channel_success(channel).unwrap();
 
         Ok(())
     }
@@ -99,9 +100,9 @@ impl Handler for Client {
         session: &mut Session,
     ) -> std::prelude::v1::Result<(), Self::Error> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-
-        let backend = backend::SshRatatui::new(tx, channel, col_width as u16, row_height as u16);
+        let backend = backend::SshRatatui::new(tx, col_width as u16, row_height as u16);
         let handle = session.handle();
+
         tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
                 if let Err(e) = handle.data(channel, data).await {
@@ -110,15 +111,12 @@ impl Handler for Client {
                 }
             }
         });
-
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.clear().unwrap();
-
         let terminal = Arc::new(Mutex::new(terminal));
         self.terminal = Some(terminal.clone());
-        session.channel_success(channel).unwrap();
 
-        tokio::spawn(async move {
+        let render = Arc::new(|terminal: &mut Terminal<backend::SshRatatui>| {
             let art = [
                 r"  ██████╗ ███████╗ █████╗ ███╗   ██╗██╗███████╗",
                 r"  ██╔══██╗██╔════╝██╔══██╗████╗  ██║██║██╔════╝",
@@ -142,8 +140,7 @@ impl Handler for Client {
             let mut x: u16 = 0;
 
             loop {
-                let mut terminal = terminal.lock().await;
-
+                println!("frame");
                 terminal
                     .draw(|frame| {
                         let mut lines = Vec::new();
@@ -183,10 +180,10 @@ impl Handler for Client {
                 if x + art_width >= terminal.size().unwrap().width {
                     x = 0;
                 }
-
-                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
+        self.render = Some(render.clone());
+        session.channel_success(channel).unwrap();
 
         Ok(())
     }
@@ -203,7 +200,8 @@ async fn main() {
 
         let key = PrivateKey::random(&mut rng, algorithm).unwrap();
 
-        key.write_openssh_file(&path, keys::ssh_key::LineEnding::CR).unwrap();
+        key.write_openssh_file(&path, keys::ssh_key::LineEnding::CR)
+            .unwrap();
 
         key
     };

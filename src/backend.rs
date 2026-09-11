@@ -7,8 +7,6 @@ use ratatui::{
 use std::io::{Error, ErrorKind::BrokenPipe};
 pub struct SshRatatui {
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    channel: russh::ChannelId,
-
     width: u16,
     height: u16,
 }
@@ -16,14 +14,11 @@ pub struct SshRatatui {
 impl SshRatatui {
     pub fn new(
         tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-        channel: russh::ChannelId,
-
         width: u16,
         height: u16,
     ) -> Self {
         Self {
             tx,
-            channel,
             width,
             height,
         }
