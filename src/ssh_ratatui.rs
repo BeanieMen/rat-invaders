@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use russh::{
-    keys::ssh_key::PrivateKey,
     server::{Auth, ChannelOpenHandle, Handler, Msg, Session},
     Channel, ChannelId,
 };
@@ -43,14 +42,6 @@ impl<S: Default, R: Default> Client<S, R> {
         Self {
             renderer: Arc::new(std::sync::Mutex::new(R::default())),
             state: Arc::new(std::sync::Mutex::new(S::default())),
-            terminal: None,
-        }
-    }
-
-    pub fn with_state_and_renderer(state: S, renderer: R) -> Self {
-        Self {
-            renderer: Arc::new(std::sync::Mutex::new(renderer)),
-            state: Arc::new(std::sync::Mutex::new(state)),
             terminal: None,
         }
     }
