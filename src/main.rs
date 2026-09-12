@@ -1,30 +1,30 @@
+mod game;
 mod ratatui_ansii_adapter;
 mod ssh_ratatui;
-mod game;
 
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use russh::{keys::PrivateKey, server::Server};
 use ssh_ratatui::{Client, ClientHandler, SshRatatui};
-use game::{ClientDataState, handle_input, init_state, render};
+use game::GameState;
 
 #[derive(Default)]
 struct RatatuiSshServer;
 
 impl Server for RatatuiSshServer {
-    type Handler = ClientHandler<ClientDataState>;
+    type Handler = ClientHandler<GameState>;
 
     fn new_client(&mut self, _addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        <Self as SshRatatui>::new_client(ClientDataState::default(), init_state, handle_input)
+        <Self as SshRatatui>::new_client(GameState::new(80, 24), game::init_state, game::handle_input)
     }
 }
 
 impl SshRatatui for RatatuiSshServer {
-    type State = ClientDataState;
+    type State = GameState;
 
     fn render(client: &mut Client<Self::State>, frame: &mut ratatui::Frame) {
-        render(client, frame);
+        game::render(client, frame);
     }
 }
 
