@@ -13,20 +13,31 @@ use crate::ratatui_ansii_adapter::RatatuiAdapter;
 
 const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 
-pub trait ClientStateTraitBounds: Send + 'static {}
-impl<T: Send + 'static> ClientStateTraitBounds for T {}
+pub trait ClientStateTraitBounds: Send + Sync + 'static {}
+impl<T: Send + Sync + 'static> ClientStateTraitBounds for T {}
 
-pub type RenderFunction<S> = fn(&mut Client<S>, &mut ratatui::Frame);
+// pub type RenderFunction<S> = fn(&mut Client<S>, &mut ratatui::Frame);
 
-pub type InitStateCallback<S> =
-    dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send;
-pub type InputHandler<S> = dyn Fn(&mut Client<S>, &[u8]) + Send + Sync;
+// pub type InitStateCallback<S> =
+//     dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send;
+// pub type InputHandler<S> = dyn Fn(&mut Client<S>, &[u8]) + Send + Sync;
+
+pub trait ClientEventHandler<S>: Send + Sync + 'static
+where
+    S: ClientStateTraitBounds,
+{
+    fn handle_event(&mut self, client: &mut Client<S>, frame: &mut ratatui::Frame);
+    fn handle_input(&mut self, client: &mut Client<S>, input: &[u8]);
+    fn handle_init_state(
+        &mut self,
+        client: &mut Client<S>,
+        terminal: &mut ratatui::Terminal<RatatuiAdapter>,
+    );
+}
 
 pub struct Client<S: ClientStateTraitBounds> {
     pub state: S,
-    pub renderer: Arc<RenderFunction<S>>,
-    pub input_handler: Arc<InputHandler<S>>,
-    pub init_state_callback: Option<Box<InitStateCallback<S>>>,
+    pub event_handler: Arc<Mutex<dyn ClientEventHandler<S>>>,
     pub ratatui_terminal: Option<Arc<Mutex<ratatui::Terminal<RatatuiAdapter>>>>,
 }
 
@@ -36,25 +47,14 @@ pub struct ClientHandler<S: ClientStateTraitBounds> {
 
 pub trait SshRatatui: Server {
     type State: ClientStateTraitBounds;
-
-    fn render(client: &mut Client<Self::State>, frame: &mut ratatui::Frame);
-
-    fn new_client<F1, F2>(
+    
+    fn new_client(
         state: Self::State,
-        init_state_callback: F1,
-        input_handler: F2,
-    ) -> ClientHandler<Self::State>
-    where
-        F1: FnOnce(&mut Client<Self::State>, &mut ratatui::Terminal<RatatuiAdapter>)
-            + Send
-            + 'static,
-        F2: Fn(&mut Client<Self::State>, &[u8]) + Send + Sync + 'static,
-    {
+        event_handler: Arc<Mutex<dyn ClientEventHandler<Self::State>>>,
+    ) -> ClientHandler<Self::State> {
         let client = Client {
             state,
-            renderer: Arc::new(Self::render),
-            input_handler: Arc::new(input_handler),
-            init_state_callback: Some(Box::new(init_state_callback)),
+            event_handler,
             ratatui_terminal: None,
         };
 
@@ -106,8 +106,11 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
         }
 
         if let Ok(mut client) = self.client.try_lock() {
-            let input_handler = client.input_handler.clone();
-            (input_handler)(&mut client, data);
+            let event_handler = client.event_handler.clone();
+            event_handler
+                .lock()
+                .unwrap()
+                .handle_input(&mut client, data);
         }
 
         Ok(())
@@ -183,14 +186,15 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
             return Ok(());
         };
 
-        // use and throw init state_callback
-        if let Some(init_state_callback) = client.init_state_callback.take()
-            && let Ok(mut term) = ratatui_terminal.try_lock()
-        {
-            init_state_callback(&mut client, &mut term);
-        }
-        client.ratatui_terminal = Some(ratatui_terminal);
+        client.ratatui_terminal = Some(ratatui_terminal.clone());
 
+        // use and throw init state_callback
+        let event_handler = client.event_handler.clone();
+
+        event_handler
+            .lock()
+            .unwrap()
+            .handle_init_state(&mut client, &mut ratatui_terminal.lock().unwrap());
         let inner = self.client.clone();
 
         // Background task: 30 FPS Render Loop
@@ -212,10 +216,16 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
                     continue;
                 };
 
-                let renderer = client.renderer.clone();
-
                 if ratatui_terminal
-                    .draw(|frame| renderer(&mut client, frame))
+                    .draw(|frame| {
+                        let event_handler = client.event_handler.clone();
+
+                        event_handler
+                            .as_ref()
+                            .lock()
+                            .unwrap()
+                            .handle_event(&mut client, frame)
+                    })
                     .is_err()
                 {
                     break;
