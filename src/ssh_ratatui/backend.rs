@@ -33,11 +33,10 @@ impl SshBackend {
         self.height = height;
     }
 }
-
-fn color(color: Color, output: &mut Vec<u8>, foreground: bool) {
+fn color(color: Color, output: &mut Vec<u8>, foreground: bool){
     let mode = if foreground { 38 } else { 48 };
 
-    match color {
+    let _ = match color {
         Color::Reset => write!(output, "\x1b[{}m", if foreground { 39 } else { 49 }),
         Color::Indexed(i) => write!(output, "\x1b[{mode};5;{i}m"),
         Color::Rgb(r, g, b) => write!(output, "\x1b[{mode};2;{r};{g};{b}m"),
@@ -64,13 +63,12 @@ fn color(color: Color, output: &mut Vec<u8>, foreground: bool) {
             let offset = ANSI_OFFSETS
                 .iter()
                 .find(|(col, _)| *col == c)
-                .map(|(_, o)| o)
-                .unwrap_or(&0);
+                .map_or(0, |(_, o)| *o);
+
             let base = if foreground { 30 } else { 40 };
             write!(output, "\x1b[{}m", base + offset)
         }
-    }
-    .unwrap();
+    };
 }
 
 impl Backend for SshBackend {

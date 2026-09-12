@@ -80,10 +80,10 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
         if let Ok(mut client) = self.client.try_lock() {
             let event_handler = client.event_handler.clone();
 
-            event_handler
-                .lock()
-                .unwrap()
-                .handle_input(&mut *client, data);
+            let Ok(mut event_handler) = event_handler.lock() else {
+                return Ok(());
+            };
+              event_handler.handle_input(&mut *client, data);
         }
 
         Ok(())
@@ -161,16 +161,16 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
 
         client.ratatui_terminal = Some(ratatui_terminal.clone());
 
-        {
-            let event_handler = client.event_handler.clone();
+        let event_handler = client.event_handler.clone();
 
-            let mut terminal = ratatui_terminal.lock().unwrap();
+        let Ok(mut event_handler) = event_handler.lock() else {
+            return Ok(());
+        };
 
-            event_handler
-                .lock()
-                .unwrap()
-                .handle_init_state(&mut client, &mut terminal);
-        }
+        let Ok(mut terminal) = ratatui_terminal.lock() else {
+            return Ok(());
+        };
+        event_handler.handle_init_state(&mut client, &mut terminal);
 
         let inner = self.client.clone();
 
@@ -196,7 +196,9 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
                     .draw(|frame| {
                         let event_handler = client.event_handler.clone();
 
-                        let Ok(mut event_handler) = event_handler.lock() else { return };
+                        let Ok(mut event_handler) = event_handler.lock() else {
+                            return;
+                        };
 
                         event_handler.handle_event(&mut client, frame);
                     })
