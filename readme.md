@@ -58,11 +58,13 @@ Client<S>
                 │
                 ▼
              SSH client
-```
 
 this is wrapped over by a ClientHandler<S> to give access to shared ownership of Client<S> (required for callbacks, cant just send this to the main loop)
 
 finally we then implement the ssh handler in the ClientHandler<S> so it covers everything and we can connect ssh to client 
+
+
+```
 
 
 # build
