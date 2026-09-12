@@ -4,106 +4,73 @@ mod ssh_ratatui;
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use ratatui::{
-    layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
-    text::{Line, Span},
-    widgets::Paragraph,
-};
+use ratatui::{layout::Rect, widgets::Paragraph};
 use russh::{keys::PrivateKey, server::Server};
-use ssh_ratatui::{Client, SshRatatui};
+use ssh_ratatui::{Client, ClientHandler, SshRatatui};
+
+#[derive(Default)]
+struct Human {
+    x: u16,
+    y: u16,
+}
 
 #[derive(Default)]
 struct ClientDataState {
-    bean_pos_x: u16,
+    human: Human,
 }
 
-fn render(state: &mut ClientDataState, frame: &mut ratatui::Frame) {
-    const COLORS: [Color; 6] = [
-        Color::Red,
-        Color::Yellow,
-        Color::Green,
-        Color::Cyan,
-        Color::Blue,
-        Color::Magenta,
-    ];
+fn init_state(
+    client: &mut Client<ClientDataState>,
+    terminal: &mut ratatui::Terminal<ratatui_ansii_adapter::RatatuiAdapter>,
+) {
+    if let Ok(size) = terminal.size() {
+        client.state.human.x = size.width / 2;
+        client.state.human.y = size.height / 2;
+    }
+}
 
-    const ART: &[&str] = &[
-        "  ██████╗ ███████╗ █████╗ ███╗   ██╗██╗███████╗",
-        "  ██╔══██╗██╔════╝██╔══██╗████╗  ██║██║██╔════╝",
-        "  ██████╔╝█████╗  ███████║██╔██╗ ██║██║█████╗  ",
-        "  ██╔══██╗██╔══╝  ██╔══██║██║╚██╗██║██║██╔══╝  ",
-        "  ██████╔╝███████╗██║  ██║██║ ╚████║██║███████╗",
-        "  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚══════╝",
-    ];
+fn handle_input(client: &mut Client<ClientDataState>, data: &[u8]) {
+    for &byte in data {
+        match byte {
+            b'w' | b'W' => client.state.human.y = client.state.human.y.saturating_sub(1),
+            b's' | b'S' => client.state.human.y = client.state.human.y.saturating_add(1),
+            b'a' | b'A' => client.state.human.x = client.state.human.x.saturating_sub(1),
+            b'd' | b'D' => client.state.human.x = client.state.human.x.saturating_add(1),
+            _ => {}
+        }
+    }
+}
 
-    let art_width = u16::try_from(
-        ART.iter()
-            .map(|row| row.chars().count())
-            .max()
-            .unwrap_or_default(),
-    )
-    .unwrap_or_default();
-
-    let art: Vec<Line> = ART
-        .iter()
-        .map(|row| {
-            Line::from(
-                row.chars()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        Span::styled(
-                            c.to_string(),
-                            Style::default().fg(
-                                COLORS[(i + usize::from(state.bean_pos_x)) % COLORS.len()],
-                            ),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect();
-
-    let [_, center, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(u16::try_from(ART.len()).unwrap_or(0)),
-        Constraint::Fill(1),
-    ])
-    .areas(frame.area());
+fn render(client: &Client<ClientDataState>, frame: &mut ratatui::Frame) {
+    let character: &[&str] = &["a"];
 
     frame.render_widget(
-        Paragraph::new(art),
+        Paragraph::new(character),
         Rect {
-            x: state.bean_pos_x,
-            ..center
+            x: client.state.human.x,
+            y: client.state.human.y,
+            width: 1,
+            height: 1,
         },
     );
-
-    let max_x = frame.area().width.saturating_sub(art_width);
-
-    state.bean_pos_x = if max_x > 0 {
-        (state.bean_pos_x + 1) % max_x
-    } else {
-        0
-    };
 }
 
 #[derive(Default)]
 struct RatatuiSshServer;
 
 impl Server for RatatuiSshServer {
-    type Handler = Client<ClientDataState>;
+    type Handler = ClientHandler<ClientDataState>;
 
     fn new_client(&mut self, _addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        <Self as SshRatatui>::new_client(ClientDataState::default())
+        <Self as SshRatatui>::new_client(ClientDataState::default(), init_state, handle_input)
     }
 }
 
 impl SshRatatui for RatatuiSshServer {
     type State = ClientDataState;
 
-    fn render(state: &mut Self::State, frame: &mut ratatui::Frame) {
-        render(state, frame);
+    fn render(client: &mut Client<Self::State>, frame: &mut ratatui::Frame) {
+        render(client, frame);
     }
 }
 

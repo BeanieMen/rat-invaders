@@ -1,39 +1,63 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Result;
 use russh::{
-    Channel, ChannelId,
     server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
+    Channel, ChannelId,
 };
-use tokio::sync::Mutex;
 
 use crate::ratatui_ansii_adapter::RatatuiAdapter;
 
 const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 
-type RenderFunction<S> = fn(&mut S, &mut ratatui::Frame);
+pub type RenderFunction<S> = fn(&mut Client<S>, &mut ratatui::Frame);
+pub type InitStateCallback<S> = dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send + Sync;
+pub type InputHandler<S> = dyn Fn(&mut Client<S>, &[u8]) + Send + Sync;
+
+pub struct Client<S> {
+    pub state: S,
+    pub renderer: Arc<RenderFunction<S>>,
+    pub input_handler: Arc<InputHandler<S>>,
+    pub init_state_callback: Option<Box<InitStateCallback<S>>>,
+    pub ratatui_terminal: Option<Arc<Mutex<ratatui::Terminal<RatatuiAdapter>>>>,
+}
+
+pub struct ClientHandler<S> {
+    pub inner: Arc<Mutex<Client<S>>>,
+}
 
 pub trait SshRatatui: Server {
     type State: Send + 'static;
 
-    fn render(state: &mut Self::State, frame: &mut ratatui::Frame);
+    fn render(client: &mut Client<Self::State>, frame: &mut ratatui::Frame);
 
-    fn new_client(state: Self::State) -> Client<Self::State> {
-        Client {
+    fn new_client<F1, F2>(
+        state: Self::State,
+        init_state_callback: F1,
+        input_handler: F2,
+    ) -> ClientHandler<Self::State>
+    where
+        F1: FnOnce(&mut Client<Self::State>, &mut ratatui::Terminal<RatatuiAdapter>) + Send + Sync + 'static,
+        F2: Fn(&mut Client<Self::State>, &[u8]) + Send + Sync + 'static,
+    {
+        let client = Client {
+            state,
             renderer: Arc::new(Self::render),
-            state: Arc::new(std::sync::Mutex::new(state)),
+            input_handler: Arc::new(input_handler),
+            init_state_callback: Some(Box::new(init_state_callback)),
             ratatui_terminal: None,
+        };
+
+        ClientHandler {
+            inner: Arc::new(Mutex::new(client)),
         }
     }
 }
 
-pub struct Client<S> {
-    pub renderer: Arc<RenderFunction<S>>,
-    pub state: Arc<std::sync::Mutex<S>>,
-    ratatui_terminal: Option<Arc<Mutex<ratatui::Terminal<RatatuiAdapter>>>>,
-}
-
-impl<S> Handler for Client<S>
+impl<S> Handler for ClientHandler<S>
 where
     S: Send + 'static,
 {
@@ -62,13 +86,24 @@ where
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         if matches!(data, b"q" | b"\x03" | b"\x04") {
-            if let Some(ratatui_terminal) = &self.ratatui_terminal {
-                let Ok(mut ratatui_terminal) = ratatui_terminal.try_lock() else {
+            let ratatui_terminal = {
+                let Ok(client) = self.inner.lock() else {
                     return Ok(());
                 };
+                client.ratatui_terminal.clone()
+            };
+            if let Some(ratatui_terminal) = ratatui_terminal
+                && let Ok(mut ratatui_terminal) = ratatui_terminal.try_lock()
+            {
                 ratatui_terminal.show_cursor().ok();
             }
             let _ = session.close(channel);
+            return Ok(());
+        }
+
+        if let Ok(mut client) = self.inner.try_lock() {
+            let input_handler = client.input_handler.clone();
+            (input_handler)(&mut client, data);
         }
 
         Ok(())
@@ -83,15 +118,20 @@ where
         _pix_height: u32,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if let Some(ratatui_terminal) = &self.ratatui_terminal {
+        let ratatui_terminal = {
+            let Ok(client) = self.inner.lock() else {
+                return Ok(());
+            };
+            client.ratatui_terminal.clone()
+        };
+
+        if let Some(ratatui_terminal) = ratatui_terminal {
             let cols = u16::try_from(cols).unwrap_or(80);
             let rows = u16::try_from(rows).unwrap_or(24);
 
-            ratatui_terminal
-                .lock()
-                .await
-                .backend_mut()
-                .resize(cols, rows);
+            if let Ok(mut ratatui_terminal) = ratatui_terminal.lock() {
+                ratatui_terminal.backend_mut().resize(cols, rows);
+            }
         }
 
         Ok(())
@@ -129,12 +169,23 @@ where
             initial_rows,
         ))?));
 
-        ratatui_terminal.lock().await.clear()?;
+        if let Ok(mut term) = ratatui_terminal.lock() {
+            term.clear()?;
+        }
 
-        self.ratatui_terminal = Some(ratatui_terminal.clone());
+        {
+            let Ok(mut client) = self.inner.lock() else {
+                return Ok(());
+            };
+            if let Some(init_state_callback) = client.init_state_callback.take()
+                && let Ok(mut term) = ratatui_terminal.try_lock()
+            {
+                init_state_callback(&mut client, &mut term);
+            }
+            client.ratatui_terminal = Some(ratatui_terminal.clone());
+        }
 
-        let renderer = self.renderer.clone();
-        let state = self.state.clone();
+        let inner = self.inner.clone();
 
         // Background task: 30 FPS Render Loop
         tokio::spawn(async move {
@@ -143,16 +194,22 @@ where
             loop {
                 interval.tick().await;
 
+                let Ok(mut client) = inner.try_lock() else {
+                    continue;
+                };
+
+                let Some(ratatui_terminal) = client.ratatui_terminal.clone() else {
+                    continue;
+                };
+
                 let Ok(mut ratatui_terminal) = ratatui_terminal.try_lock() else {
                     continue;
                 };
 
-                let Ok(mut state) = state.try_lock() else {
-                    continue;
-                };
+                let renderer = client.renderer.clone();
 
                 if ratatui_terminal
-                    .draw(|frame| renderer(&mut state, frame))
+                    .draw(|frame| renderer(&mut client, frame))
                     .is_err()
                 {
                     break;
