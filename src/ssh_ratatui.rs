@@ -31,7 +31,7 @@ pub struct Client<S: ClientStateTraitBounds> {
 }
 
 pub struct ClientHandler<S: ClientStateTraitBounds> {
-    pub inner: Arc<Mutex<Client<S>>>,
+    pub client: Arc<Mutex<Client<S>>>,
 }
 
 pub trait SshRatatui: Server {
@@ -59,7 +59,7 @@ pub trait SshRatatui: Server {
         };
 
         ClientHandler {
-            inner: Arc::new(Mutex::new(client)),
+            client: Arc::new(Mutex::new(client)),
         }
     }
 }
@@ -91,7 +91,7 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
     ) -> Result<(), Self::Error> {
         if matches!(data, b"q" | b"\x03" | b"\x04") {
             let ratatui_terminal = {
-                let Ok(client) = self.inner.lock() else {
+                let Ok(client) = self.client.lock() else {
                     return Ok(());
                 };
                 client.ratatui_terminal.clone()
@@ -105,7 +105,7 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
             return Ok(());
         }
 
-        if let Ok(mut client) = self.inner.try_lock() {
+        if let Ok(mut client) = self.client.try_lock() {
             let input_handler = client.input_handler.clone();
             (input_handler)(&mut client, data);
         }
@@ -124,7 +124,7 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         let ratatui_terminal = {
-            let Ok(client) = self.inner.lock() else {
+            let Ok(client) = self.client.lock() else {
                 return Ok(());
             };
             client.ratatui_terminal.clone()
@@ -179,7 +179,7 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
             term.clear()?;
         }
 
-        let Ok(mut client) = self.inner.lock() else {
+        let Ok(mut client) = self.client.lock() else {
             return Ok(());
         };
 
@@ -191,7 +191,7 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
         }
         client.ratatui_terminal = Some(ratatui_terminal);
 
-        let inner = self.inner.clone();
+        let inner = self.client.clone();
 
         // Background task: 30 FPS Render Loop
         tokio::spawn(async move {
