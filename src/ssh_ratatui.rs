@@ -5,8 +5,8 @@ use std::{
 
 use anyhow::Result;
 use russh::{
-    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
     Channel, ChannelId,
+    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
 
 use crate::ratatui_ansii_adapter::RatatuiAdapter;
@@ -16,9 +16,9 @@ const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 pub trait ClientStateTraitBounds: Send + 'static {}
 impl<T: Send + 'static> ClientStateTraitBounds for T {}
 
-
 pub type RenderFunction<S> = fn(&mut Client<S>, &mut ratatui::Frame);
-pub type InitStateCallback<S> = dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send;
+pub type InitStateCallback<S> =
+    dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send;
 pub type InputHandler<S> = dyn Fn(&mut Client<S>, &[u8]) + Send + Sync;
 
 pub struct Client<S: ClientStateTraitBounds> {
@@ -44,7 +44,9 @@ pub trait SshRatatui: Server {
         input_handler: F2,
     ) -> ClientHandler<Self::State>
     where
-        F1: FnOnce(&mut Client<Self::State>, &mut ratatui::Terminal<RatatuiAdapter>) + Send + 'static,
+        F1: FnOnce(&mut Client<Self::State>, &mut ratatui::Terminal<RatatuiAdapter>)
+            + Send
+            + 'static,
         F2: Fn(&mut Client<Self::State>, &[u8]) + Send + Sync + 'static,
     {
         let client = Client {
@@ -176,17 +178,17 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
             term.clear()?;
         }
 
+        let Ok(mut client) = self.inner.lock() else {
+            return Ok(());
+        };
+
+        // use and throw init state_callback
+        if let Some(init_state_callback) = client.init_state_callback.take()
+            && let Ok(mut term) = ratatui_terminal.try_lock()
         {
-            let Ok(mut client) = self.inner.lock() else {
-                return Ok(());
-            };
-            if let Some(init_state_callback) = client.init_state_callback.take()
-                && let Ok(mut term) = ratatui_terminal.try_lock()
-            {
-                init_state_callback(&mut client, &mut term);
-            }
-            client.ratatui_terminal = Some(ratatui_terminal);
+            init_state_callback(&mut client, &mut term);
         }
+        client.ratatui_terminal = Some(ratatui_terminal);
 
         let inner = self.inner.clone();
 
