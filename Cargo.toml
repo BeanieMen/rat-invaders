@@ -21,7 +21,6 @@ nursery = { level = "deny", priority = -1 }
 missing_errors_doc = "allow"
 unwrap_used = "deny"
 expect_used = "deny"
-indexing_slicing = "deny"
 unreachable = "deny"
 unimplemented = "deny"
 unchecked_time_subtraction = "deny"

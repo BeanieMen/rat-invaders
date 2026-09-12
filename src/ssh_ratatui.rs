@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use russh::{
+    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
     Channel, ChannelId,
-    server::{Auth, ChannelOpenHandle, Handler, Msg, Session},
 };
 use tokio::sync::Mutex;
 
@@ -11,45 +11,32 @@ use crate::ratatui_adapter::SshBackend;
 
 const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 
-pub use russh::server::Server;
-
-pub trait Renderer<S>: Default + Send + Sync + 'static {
-    fn render(&mut self, state: &mut S, frame: &mut ratatui::Frame);
-}
-
 pub trait SshRatatui: Server {
     type State: Default + Send + 'static;
-    type Renderer: Renderer<Self::State>;
 
-    fn new_client() -> Client<Self::State, Self::Renderer> {
-        Client::default()
-    }
-}
+    fn render(state: &mut Self::State, frame: &mut ratatui::Frame);
 
-pub struct Client<S, R> {
-    pub renderer: Arc<std::sync::Mutex<R>>,
-    pub state: Arc<std::sync::Mutex<S>>,
-    terminal: Option<Arc<Mutex<ratatui::Terminal<SshBackend>>>>,
-}
-
-impl<S: Default, R: Renderer<S>> Default for Client<S, R> {
-    fn default() -> Self {
-        Self {
-            renderer: Arc::new(std::sync::Mutex::new(R::default())),
-            state: Arc::new(std::sync::Mutex::new(S::default())),
+    fn new_client() -> Client<Self::State> {
+        Client {
+            renderer: Arc::new(Mutex::new(Self::render)),
+            state: Arc::new(std::sync::Mutex::new(Self::State::default())),
             terminal: None,
         }
     }
 }
+type RenderFunction<S> = fn(&mut S, &mut ratatui::Frame);
+pub struct Client<S> {
+    pub renderer: Arc<Mutex<RenderFunction<S>>>,
+    pub state: Arc<std::sync::Mutex<S>>,
+    terminal: Option<Arc<Mutex<ratatui::Terminal<SshBackend>>>>,
+}
 
-impl<S, R> Handler for Client<S, R>
+impl<S> Handler for Client<S>
 where
     S: Send + 'static,
-    R: Renderer<S>,
 {
     type Error = anyhow::Error;
 
-    // clippy is crying but cant do anything bout it
     #[allow(clippy::unused_async_trait_impl)]
     async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
         Ok(Auth::Accept)
@@ -64,23 +51,22 @@ where
         reply.accept().await;
         Ok(())
     }
-    
-    // clippy is crying but cant do anything bout it
+
     #[allow(clippy::unused_async_trait_impl)]
     async fn data(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         data: &[u8],
-        _session: &mut Session,
+        session: &mut Session,
     ) -> Result<(), Self::Error> {
         if matches!(data, b"q" | b"\x03" | b"\x04") {
-            let Some(terminal) = &self.terminal else {
-                return Ok(());
-            };
-            let Ok(mut terminal) = terminal.try_lock() else {
-                return Ok(());
-            };
-            terminal.show_cursor().ok();
+            if let Some(terminal) = &self.terminal {
+                let Ok(mut terminal) = terminal.try_lock() else {
+                    return Ok(());
+                };
+                terminal.show_cursor().ok();
+            }
+            let _ = session.close(channel);
         }
 
         Ok(())
@@ -96,10 +82,10 @@ where
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(terminal) = &self.terminal {
-            terminal.lock().await.backend_mut().resize(
-                u16::try_from(cols).unwrap_or(0),
-                u16::try_from(rows).unwrap_or(0),
-            );
+            let cols = u16::try_from(cols).unwrap_or(80);
+            let rows = u16::try_from(rows).unwrap_or(24);
+
+            terminal.lock().await.backend_mut().resize(cols, rows);
         }
 
         Ok(())
@@ -119,6 +105,7 @@ where
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let ssh = session.handle();
 
+        // Background task: SSH outbound writer
         tokio::spawn(async move {
             while let Some(data) = rx.recv().await {
                 if ssh.data(channel, data).await.is_err() {
@@ -127,11 +114,12 @@ where
             }
         });
 
-        let terminal = Arc::new(Mutex::new(ratatui::Terminal::new(SshBackend::new(
-            tx,
-            u16::try_from(cols).unwrap_or(0),
-            u16::try_from(rows).unwrap_or(0),
-        ))?));
+        let initial_cols = u16::try_from(cols).unwrap_or(80);
+        let initial_rows = u16::try_from(rows).unwrap_or(24);
+
+        let terminal = Arc::new(Mutex::new(ratatui::Terminal::new(
+            SshBackend::new(tx, initial_cols, initial_rows),
+        )?));
 
         terminal.lock().await.clear()?;
 
@@ -140,6 +128,7 @@ where
         let renderer = self.renderer.clone();
         let state = self.state.clone();
 
+        // Background task: 30 FPS Render Loop
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(FRAME_TIME);
 
@@ -150,7 +139,7 @@ where
                     continue;
                 };
 
-                let Ok(mut renderer) = renderer.try_lock() else {
+                let Ok(renderer) = renderer.try_lock() else {
                     continue;
                 };
 
@@ -158,9 +147,9 @@ where
                     continue;
                 };
 
-                terminal
-                    .draw(|frame| renderer.render(&mut state, frame))
-                    .ok();
+                if terminal.draw(|frame| renderer(&mut state, frame)).is_err() {
+                    break;
+                }
             }
         });
 
