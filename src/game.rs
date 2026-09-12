@@ -18,27 +18,27 @@ use ratatui::{
 
 use crate::{
     ratatui_ansii_adapter::RatatuiAdapter,
-    ssh_ratatui::{Client, ClientStateTraitBounds},
+    ssh_ratatui::{Client},
 };
 
 pub const ENEMY_SPRITE: &[&str] = &[
-    "  __        ",
+    "  __         ",
     " /o \\__     ",
     "(    @\\___  ",
-    " /         O",
-    "/   (_____/ ",
-    "/_____/   U ",
+    " /         O ",
+    "/   (_____/  ",
+    "/_____/   U  ",
 ];
 
 pub const PLAYER_SPRITE: &[&str] = &[
-    " /\\_/\\ ",
-    "( o.o )",
-    " > ^ < ",
+    " /\\ _ /\\   ",
+    "( o . o )  ",
+    " >  ^  <   ",
 ];
 
 const ENEMY_W: u16 = 12;
 const ENEMY_H: u16 = 6;
-const PLAYER_W: u16 = 7;
+const PLAYER_W: u16 = 10;
 const PLAYER_H: u16 = 3;
 
 pub struct GameState {
