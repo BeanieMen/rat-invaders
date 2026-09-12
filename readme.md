@@ -15,6 +15,8 @@ its a space invaders type game made in ratatui to be ran over ssh. the novelty i
 
 [Demo video](https://github.com/user-attachments/assets/f64a5b48-33b3-4c69-94ad-675e39888ffe)
 
+you can do `ssh beanoni.xyz -p 2223`
+
 ## technical rant
 
 It's kinda interesting. I might switch over to Rust at this rate. You can Frankenstein together pretty much any libraries pretty easily.
