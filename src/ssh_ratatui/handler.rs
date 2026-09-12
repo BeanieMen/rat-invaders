@@ -196,10 +196,9 @@ impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
                     .draw(|frame| {
                         let event_handler = client.event_handler.clone();
 
-                        event_handler
-                            .lock()
-                            .unwrap()
-                            .handle_event(&mut client, frame);
+                        let Ok(mut event_handler) = event_handler.lock() else { return };
+
+                        event_handler.handle_event(&mut client, frame);
                     })
                     .is_err()
                 {

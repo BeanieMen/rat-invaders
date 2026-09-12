@@ -1,11 +1,11 @@
-use std::io::{Error, ErrorKind::BrokenPipe};
-
 use ratatui::{
     backend::{Backend, ClearType, WindowSize},
     buffer::Cell,
     layout::{Position, Size},
     style::Color,
 };
+use std::io::Write;
+use std::io::{Error, ErrorKind::BrokenPipe};
 
 pub struct SshBackend {
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
@@ -19,11 +19,7 @@ impl SshBackend {
         width: u16,
         height: u16,
     ) -> Self {
-        Self {
-            tx,
-            width,
-            height,
-        }
+        Self { tx, width, height }
     }
 
     pub fn write(&self, data: &[u8]) -> std::io::Result<()> {
@@ -39,163 +35,55 @@ impl SshBackend {
 }
 
 fn color(color: Color, output: &mut Vec<u8>, foreground: bool) {
-    let base = if foreground { 30 } else { 40 };
+    let mode = if foreground { 38 } else { 48 };
 
     match color {
-        Color::Reset => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[39m"
-            } else {
-                b"\x1b[49m"
-            });
-        }
+        Color::Reset => write!(output, "\x1b[{}m", if foreground { 39 } else { 49 }),
+        Color::Indexed(i) => write!(output, "\x1b[{mode};5;{i}m"),
+        Color::Rgb(r, g, b) => write!(output, "\x1b[{mode};2;{r};{g};{b}m"),
+        c => {
+            const ANSI_OFFSETS: [(Color, u8); 16] = [
+                (Color::Black, 0),
+                (Color::Red, 1),
+                (Color::Green, 2),
+                (Color::Yellow, 3),
+                (Color::Blue, 4),
+                (Color::Magenta, 5),
+                (Color::Cyan, 6),
+                (Color::Gray, 7),
+                (Color::DarkGray, 60),
+                (Color::LightRed, 61),
+                (Color::LightGreen, 62),
+                (Color::LightYellow, 63),
+                (Color::LightBlue, 64),
+                (Color::LightMagenta, 65),
+                (Color::LightCyan, 66),
+                (Color::White, 67),
+            ];
 
-        Color::Black => {
-            output.extend_from_slice(
-                format!("\x1b[{base}m").as_bytes(),
-            );
-        }
-
-        Color::Red => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 1).as_bytes(),
-            );
-        }
-
-        Color::Green => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 2).as_bytes(),
-            );
-        }
-
-        Color::Yellow => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 3).as_bytes(),
-            );
-        }
-
-        Color::Blue => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 4).as_bytes(),
-            );
-        }
-
-        Color::Magenta => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 5).as_bytes(),
-            );
-        }
-
-        Color::Cyan => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 6).as_bytes(),
-            );
-        }
-
-        Color::Gray => {
-            output.extend_from_slice(
-                format!("\x1b[{}m", base + 7).as_bytes(),
-            );
-        }
-
-        Color::DarkGray => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[90m"
-            } else {
-                b"\x1b[100m"
-            });
-        }
-
-        Color::LightRed => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[91m"
-            } else {
-                b"\x1b[101m"
-            });
-        }
-
-        Color::LightGreen => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[92m"
-            } else {
-                b"\x1b[102m"
-            });
-        }
-
-        Color::LightYellow => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[93m"
-            } else {
-                b"\x1b[103m"
-            });
-        }
-
-        Color::LightBlue => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[94m"
-            } else {
-                b"\x1b[104m"
-            });
-        }
-
-        Color::LightMagenta => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[95m"
-            } else {
-                b"\x1b[105m"
-            });
-        }
-
-        Color::LightCyan => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[96m"
-            } else {
-                b"\x1b[106m"
-            });
-        }
-
-        Color::White => {
-            output.extend_from_slice(if foreground {
-                b"\x1b[97m"
-            } else {
-                b"\x1b[107m"
-            });
-        }
-
-        Color::Indexed(i) => {
-            let mode = if foreground { 38 } else { 48 };
-
-            output.extend_from_slice(
-                format!("\x1b[{mode};5;{i}m").as_bytes(),
-            );
-        }
-
-        Color::Rgb(r, g, b) => {
-            let mode = if foreground { 38 } else { 48 };
-
-            output.extend_from_slice(
-                format!("\x1b[{mode};2;{r};{g};{b}m").as_bytes(),
-            );
+            let offset = ANSI_OFFSETS
+                .iter()
+                .find(|(col, _)| *col == c)
+                .map(|(_, o)| o)
+                .unwrap_or(&0);
+            let base = if foreground { 30 } else { 40 };
+            write!(output, "\x1b[{}m", base + offset)
         }
     }
+    .unwrap();
 }
 
 impl Backend for SshBackend {
     type Error = std::io::Error;
 
-    fn draw<'a, I>(
-        &mut self,
-        content: I,
-    ) -> Result<(), Self::Error>
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
         let mut output = Vec::new();
 
         for (x, y, cell) in content {
-            output.extend_from_slice(
-                format!("\x1b[{};{}H", y + 1, x + 1).as_bytes(),
-            );
+            output.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
 
             color(cell.fg, &mut output, true);
             color(cell.bg, &mut output, false);
@@ -238,21 +126,13 @@ impl Backend for SshBackend {
         self.write(b"\x1b[?25h")
     }
 
-    fn set_cursor_position<P: Into<Position>>(
-        &mut self,
-        position: P,
-    ) -> Result<(), Self::Error> {
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
         let p = position.into();
 
-        self.write(
-            format!("\x1b[{};{}H", p.y + 1, p.x + 1).as_bytes(),
-        )
+        self.write(format!("\x1b[{};{}H", p.y + 1, p.x + 1).as_bytes())
     }
 
-    fn clear_region(
-        &mut self,
-        clear_type: ClearType,
-    ) -> Result<(), Self::Error> {
+    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
         match clear_type {
             ClearType::All => self.write(b"\x1b[2J\x1b[H"),
             ClearType::AfterCursor => self.write(b"\x1b[0J"),
@@ -262,9 +142,7 @@ impl Backend for SshBackend {
         }
     }
 
-    fn get_cursor_position(
-        &mut self,
-    ) -> Result<Position, Self::Error> {
+    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
         Ok(Position { x: 0, y: 0 })
     }
 

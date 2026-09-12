@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use game::GameState;
-use russh::{client, keys::PrivateKey, server::Server};
+use russh::{keys::PrivateKey, server::Server};
 use ssh_ratatui::{Client, ClientHandler, SshRatatui};
 
 use crate::ssh_ratatui::{ClientEventHandler, SshBackend};

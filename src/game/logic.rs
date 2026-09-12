@@ -46,7 +46,7 @@ impl GameState {
 
 pub fn init_state(
     client: &mut Client<GameState>,
-    terminal: &mut ratatui::Terminal<SshBackend>,
+    terminal: &ratatui::Terminal<SshBackend>,
 ) {
     if let Ok(size) = terminal.size() {
         client.state = GameState::new(size.width, size.height);
