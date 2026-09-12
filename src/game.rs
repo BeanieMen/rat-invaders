@@ -32,8 +32,8 @@ pub const ENEMY_SPRITE: &[&str] = &[
 
 pub const PLAYER_SPRITE: &[&str] = &[
     " /\\ _ /\\   ",
-    "( o . o )  ",
-    " >  ^  <   ",
+    "( o . o )    ",
+    " >  ^  <     ",
 ];
 
 const ENEMY_W: u16 = 12;

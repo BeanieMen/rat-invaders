@@ -1,5 +1,4 @@
-/target
-.gitignore 
+/target 
 .vscode
 ed25519_key
 .opencode/
