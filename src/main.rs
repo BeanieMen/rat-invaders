@@ -1,4 +1,4 @@
-mod ratatui_adapter;
+mod ratatui_ansii_adapter;
 mod ssh_ratatui;
 
 use std::{sync::Arc, time::Duration};
@@ -95,7 +95,7 @@ impl Server for RatatuiSshServer {
     type Handler = Client<ClientDataState>;
 
     fn new_client(&mut self, _addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        <Self as SshRatatui>::new_client()
+        <Self as SshRatatui>::new_client(ClientDataState::default())
     }
 }
 

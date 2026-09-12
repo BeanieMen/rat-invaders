@@ -2,33 +2,35 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use russh::{
-    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
     Channel, ChannelId,
+    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
 use tokio::sync::Mutex;
 
-use crate::ratatui_adapter::SshBackend;
+use crate::ratatui_ansii_adapter::RatatuiAdapter;
 
 const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 
+type RenderFunction<S> = fn(&mut S, &mut ratatui::Frame);
+
 pub trait SshRatatui: Server {
-    type State: Default + Send + 'static;
+    type State: Send + 'static;
 
     fn render(state: &mut Self::State, frame: &mut ratatui::Frame);
 
-    fn new_client() -> Client<Self::State> {
+    fn new_client(state: Self::State) -> Client<Self::State> {
         Client {
-            renderer: Arc::new(Mutex::new(Self::render)),
-            state: Arc::new(std::sync::Mutex::new(Self::State::default())),
-            terminal: None,
+            renderer: Arc::new(Self::render),
+            state: Arc::new(std::sync::Mutex::new(state)),
+            ratatui_terminal: None,
         }
     }
 }
-type RenderFunction<S> = fn(&mut S, &mut ratatui::Frame);
+
 pub struct Client<S> {
-    pub renderer: Arc<Mutex<RenderFunction<S>>>,
+    pub renderer: Arc<RenderFunction<S>>,
     pub state: Arc<std::sync::Mutex<S>>,
-    terminal: Option<Arc<Mutex<ratatui::Terminal<SshBackend>>>>,
+    ratatui_terminal: Option<Arc<Mutex<ratatui::Terminal<RatatuiAdapter>>>>,
 }
 
 impl<S> Handler for Client<S>
@@ -60,11 +62,11 @@ where
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         if matches!(data, b"q" | b"\x03" | b"\x04") {
-            if let Some(terminal) = &self.terminal {
-                let Ok(mut terminal) = terminal.try_lock() else {
+            if let Some(ratatui_terminal) = &self.ratatui_terminal {
+                let Ok(mut ratatui_terminal) = ratatui_terminal.try_lock() else {
                     return Ok(());
                 };
-                terminal.show_cursor().ok();
+                ratatui_terminal.show_cursor().ok();
             }
             let _ = session.close(channel);
         }
@@ -81,11 +83,15 @@ where
         _pix_height: u32,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if let Some(terminal) = &self.terminal {
+        if let Some(ratatui_terminal) = &self.ratatui_terminal {
             let cols = u16::try_from(cols).unwrap_or(80);
             let rows = u16::try_from(rows).unwrap_or(24);
 
-            terminal.lock().await.backend_mut().resize(cols, rows);
+            ratatui_terminal
+                .lock()
+                .await
+                .backend_mut()
+                .resize(cols, rows);
         }
 
         Ok(())
@@ -117,13 +123,15 @@ where
         let initial_cols = u16::try_from(cols).unwrap_or(80);
         let initial_rows = u16::try_from(rows).unwrap_or(24);
 
-        let terminal = Arc::new(Mutex::new(ratatui::Terminal::new(
-            SshBackend::new(tx, initial_cols, initial_rows),
-        )?));
+        let ratatui_terminal = Arc::new(Mutex::new(ratatui::Terminal::new(RatatuiAdapter::new(
+            tx,
+            initial_cols,
+            initial_rows,
+        ))?));
 
-        terminal.lock().await.clear()?;
+        ratatui_terminal.lock().await.clear()?;
 
-        self.terminal = Some(terminal.clone());
+        self.ratatui_terminal = Some(ratatui_terminal.clone());
 
         let renderer = self.renderer.clone();
         let state = self.state.clone();
@@ -135,11 +143,7 @@ where
             loop {
                 interval.tick().await;
 
-                let Ok(mut terminal) = terminal.try_lock() else {
-                    continue;
-                };
-
-                let Ok(renderer) = renderer.try_lock() else {
+                let Ok(mut ratatui_terminal) = ratatui_terminal.try_lock() else {
                     continue;
                 };
 
@@ -147,7 +151,10 @@ where
                     continue;
                 };
 
-                if terminal.draw(|frame| renderer(&mut state, frame)).is_err() {
+                if ratatui_terminal
+                    .draw(|frame| renderer(&mut state, frame))
+                    .is_err()
+                {
                     break;
                 }
             }

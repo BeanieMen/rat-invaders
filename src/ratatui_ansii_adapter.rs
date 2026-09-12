@@ -6,13 +6,13 @@ use ratatui::{
 };
 use std::io::{Error, ErrorKind::BrokenPipe};
 
-pub struct SshBackend {
+pub struct RatatuiAdapter {
     tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     width: u16,
     height: u16,
 }
 
-impl SshBackend {
+impl RatatuiAdapter {
     pub const fn new(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>, width: u16, height: u16) -> Self {
         Self { tx, width, height }
     }
@@ -99,7 +99,8 @@ fn color(color: Color, output: &mut Vec<u8>, foreground: bool) {
         }
     }
 }
-impl Backend for SshBackend {
+
+impl Backend for RatatuiAdapter {
     type Error = std::io::Error;
 
     fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
