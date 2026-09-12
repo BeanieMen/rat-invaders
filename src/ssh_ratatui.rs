@@ -17,6 +17,7 @@ pub trait ClientStateTraitBounds: Send + 'static {}
 impl<T: Send + 'static> ClientStateTraitBounds for T {}
 
 pub type RenderFunction<S> = fn(&mut Client<S>, &mut ratatui::Frame);
+
 pub type InitStateCallback<S> =
     dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send;
 pub type InputHandler<S> = dyn Fn(&mut Client<S>, &[u8]) + Send + Sync;
