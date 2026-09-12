@@ -12,13 +12,19 @@ its a space invaders type game made in ratatui to be ran over ssh. the novelty i
 - clear, fg, bg, cursor pos ansii support
 
 # demo
-https://github.com/user-attachments/assets/f64a5b48-33b3-4c69-94ad-675e39888ffe
 
-# technical rant
-its kinda interesting. i might switch over to rust at this rate you can frankenstien together any libraries pretty easily. i am using a channel to send over data from ratatui whenever it tries to draw clear or set cursor over to ssh output framebuffer by using a channel.
+[Demo video](https://github.com/user-attachments/assets/f64a5b48-33b3-4c69-94ad-675e39888ffe)
 
+## technical rant
 
-Client<S> (the s defines the type of data that will be transferred over between ticks)
+It's kinda interesting. I might switch over to Rust at this rate. You can Frankenstein together pretty much any libraries pretty easily.
+
+I'm using a channel to send data from Ratatui whenever it tries to draw, clear, or set the cursor. This data is sent over to an SSH output framebuffer through a channel.
+
+The architecture looks roughly like this:
+
+```text
+Client<S>
 │
 ├── state: S
 │   └── Application state / state data
@@ -52,6 +58,7 @@ Client<S> (the s defines the type of data that will be transferred over between 
                 │
                 ▼
              SSH client
+```
 
 this is wrapped over by a ClientHandler<S> to give access to shared ownership of Client<S> (required for callbacks, cant just send this to the main loop)
 
