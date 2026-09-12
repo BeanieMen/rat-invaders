@@ -13,11 +13,15 @@ use crate::ratatui_ansii_adapter::RatatuiAdapter;
 
 const FRAME_TIME: Duration = Duration::from_millis(1000 / 30);
 
+pub trait ClientStateTraitBounds: Send + 'static {}
+impl<T: Send + 'static> ClientStateTraitBounds for T {}
+
+
 pub type RenderFunction<S> = fn(&mut Client<S>, &mut ratatui::Frame);
-pub type InitStateCallback<S> = dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send + Sync;
+pub type InitStateCallback<S> = dyn FnOnce(&mut Client<S>, &mut ratatui::Terminal<RatatuiAdapter>) + Send;
 pub type InputHandler<S> = dyn Fn(&mut Client<S>, &[u8]) + Send + Sync;
 
-pub struct Client<S> {
+pub struct Client<S: ClientStateTraitBounds> {
     pub state: S,
     pub renderer: Arc<RenderFunction<S>>,
     pub input_handler: Arc<InputHandler<S>>,
@@ -25,12 +29,12 @@ pub struct Client<S> {
     pub ratatui_terminal: Option<Arc<Mutex<ratatui::Terminal<RatatuiAdapter>>>>,
 }
 
-pub struct ClientHandler<S> {
+pub struct ClientHandler<S: ClientStateTraitBounds> {
     pub inner: Arc<Mutex<Client<S>>>,
 }
 
 pub trait SshRatatui: Server {
-    type State: Send + 'static;
+    type State: ClientStateTraitBounds;
 
     fn render(client: &mut Client<Self::State>, frame: &mut ratatui::Frame);
 
@@ -40,7 +44,7 @@ pub trait SshRatatui: Server {
         input_handler: F2,
     ) -> ClientHandler<Self::State>
     where
-        F1: FnOnce(&mut Client<Self::State>, &mut ratatui::Terminal<RatatuiAdapter>) + Send + Sync + 'static,
+        F1: FnOnce(&mut Client<Self::State>, &mut ratatui::Terminal<RatatuiAdapter>) + Send + 'static,
         F2: Fn(&mut Client<Self::State>, &[u8]) + Send + Sync + 'static,
     {
         let client = Client {
@@ -57,10 +61,7 @@ pub trait SshRatatui: Server {
     }
 }
 
-impl<S> Handler for ClientHandler<S>
-where
-    S: Send + 'static,
-{
+impl<S: ClientStateTraitBounds> Handler for ClientHandler<S> {
     type Error = anyhow::Error;
 
     #[allow(clippy::unused_async_trait_impl)]
@@ -109,6 +110,7 @@ where
         Ok(())
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn window_change_request(
         &mut self,
         _channel: ChannelId,
@@ -137,6 +139,7 @@ where
         Ok(())
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn pty_request(
         &mut self,
         channel: ChannelId,
@@ -182,7 +185,7 @@ where
             {
                 init_state_callback(&mut client, &mut term);
             }
-            client.ratatui_terminal = Some(ratatui_terminal.clone());
+            client.ratatui_terminal = Some(ratatui_terminal);
         }
 
         let inner = self.inner.clone();
