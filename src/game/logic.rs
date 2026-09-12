@@ -6,7 +6,7 @@
 )]
 
 use super::{ENEMY_H, ENEMY_W, PLAYER_H, PLAYER_W};
-use crate::{ratatui_ansii_adapter::RatatuiAdapter, ssh_ratatui::Client};
+use crate::{ssh_ratatui::Client, ssh_ratatui::SshBackend};
 
 pub struct GameState {
     pub player_x: u16,
@@ -46,7 +46,7 @@ impl GameState {
 
 pub fn init_state(
     client: &mut Client<GameState>,
-    terminal: &mut ratatui::Terminal<RatatuiAdapter>,
+    terminal: &mut ratatui::Terminal<SshBackend>,
 ) {
     if let Ok(size) = terminal.size() {
         client.state = GameState::new(size.width, size.height);

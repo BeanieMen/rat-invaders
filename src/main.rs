@@ -1,5 +1,4 @@
 mod game;
-mod ratatui_ansii_adapter;
 mod ssh_ratatui;
 
 use std::{
@@ -9,32 +8,40 @@ use std::{
 
 use anyhow::Result;
 use game::GameState;
-use russh::{keys::PrivateKey, server::Server};
+use russh::{client, keys::PrivateKey, server::Server};
 use ssh_ratatui::{Client, ClientHandler, SshRatatui};
 
-use crate::ssh_ratatui::ClientEventHandler;
+use crate::ssh_ratatui::{ClientEventHandler, SshBackend};
 
 #[derive(Default)]
 struct EventHandeler;
 
 impl ClientEventHandler<GameState> for EventHandeler {
-    fn handle_event(&mut self, client: &mut Client<GameState>, frame: &mut ratatui::Frame) {
+    fn handle_event(
+        &mut self,
+        client: &mut Client<GameState>,
+        frame: &mut ratatui::Frame,
+    ) {
         game::render(client, frame);
     }
 
-    fn handle_input(&mut self, client: &mut Client<GameState>, input: &[u8]) {
+    fn handle_input(
+        &mut self,
+        
+        client: &mut Client<GameState>,
+        input: &[u8],
+    ) {
         game::handle_input(client, input);
     }
 
     fn handle_init_state(
         &mut self,
         client: &mut Client<GameState>,
-        terminal: &mut ratatui::Terminal<ratatui_ansii_adapter::RatatuiAdapter>,
+        terminal: &mut ratatui::Terminal<SshBackend>,
     ) {
         game::init_state(client, terminal);
     }
 }
-
 #[derive(Default)]
 struct RatatuiSshServer;
 
